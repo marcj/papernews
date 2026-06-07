@@ -40,7 +40,7 @@ def _ollama(system: str, user: str, max_tokens: int) -> str:
                 {"role": "user", "content": user},
             ],
         },
-        timeout=600,
+        timeout=float(os.environ.get("OLLAMA_TIMEOUT", "1800")),
     )
     resp.raise_for_status()
     return resp.json()["message"]["content"]

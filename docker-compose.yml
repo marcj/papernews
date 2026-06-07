@@ -5,16 +5,20 @@ services:
     container_name: papernews
     restart: unless-stopped
     environment:
-      # Set this in a .env file or your shell. claude -p needs it.
+      # LLM backend — "anthropic" (default) or "ollama" (bring your own Ollama instance)
+      - LLM_BACKEND=${LLM_BACKEND:-anthropic}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # Override the default 4h ingest cycle (in seconds) if you want.
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
       - INGEST_INTERVAL_SECONDS=${INGEST_INTERVAL_SECONDS:-14400}
       - PAPERNEWS_WORKERS=${PAPERNEWS_WORKERS:-8}
+      # Hook to push the PDF to reMarkable after each ingest
+      - POST_INGEST_HOOK=${POST_INGEST_HOOK:-}
+      - POST_INGEST_HOOK_TIMEOUT=${POST_INGEST_HOOK_TIMEOUT:-300}
     volumes:
-      # Persistent data (state.db + cached PDFs/PNGs). Survives restarts and
-      # `docker compose down`. Use `docker compose down -v` to wipe.
       - ./data:/data
-      # Hot-reload sources without rebuilding the image.
       - ./sources.toml:/app/sources.toml:ro
+      # rmapi auth token — generate once by running rmapi interactively
+      - ${RMAPI_CONFIG:-~/.config/rmapi}:/root/.config/rmapi:ro
     ports:
       - "8000:8000"

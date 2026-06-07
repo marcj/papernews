@@ -1,4 +1,4 @@
-# papernews container: TeX Live + Python + Node (for `claude -p`) + the project
+# papernews container: TeX Live + Python + rmapi + the project
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -9,7 +9,7 @@ ENV PYTHONUNBUFFERED=1
 # + amsmath + needspace + Latin Modern), poppler for previews, Python 3, Node
 # for the Claude CLI, and a few build-essentials trafilatura wants.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
+        ca-certificates curl \
         texlive-xetex texlive-fonts-recommended texlive-latex-extra \
         texlive-lang-european \
         lmodern \
@@ -17,6 +17,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
+
+# rmapi: reMarkable API client — static Go binary, no runtime deps.
+# Check https://github.com/ddvk/rmapi/releases for the latest version.
+ARG RMAPI_VERSION=0.0.34
+RUN curl -fsSL \
+        "https://github.com/ddvk/rmapi/releases/download/v${RMAPI_VERSION}/rmapi-linux-amd64.tar.gz" \
+    | tar -xz -C /usr/local/bin rmapi \
+ && chmod +x /usr/local/bin/rmapi
 
 WORKDIR /app
 
@@ -27,7 +35,7 @@ RUN python3 -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir \
         requests feedparser trafilatura jinja2 \
         flask apscheduler gunicorn \
-        anthropic
+        anthropic httpx
 
 COPY papernews ./papernews
 COPY sources.toml ./
