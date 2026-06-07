@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as _html
 import re
 import shutil
 import subprocess
@@ -7,6 +8,7 @@ import sys
 from pathlib import Path
 
 import jinja2
+from markupsafe import Markup
 
 
 _TEX_REPLACE = {
@@ -269,3 +271,125 @@ def build_pdf(
     pdf_dst = out_dir / f"{date}.pdf"
     shutil.copy(pdf_src, pdf_dst)
     return pdf_dst
+
+
+# ---------------------------------------------------------------------------
+# HTML / EPUB rendering
+# ---------------------------------------------------------------------------
+
+_HTML_INLINE_RE = re.compile(r"`([^`\n]+)`")
+
+
+def _process_html_inline(text: str) -> str:
+    """Convert inline `code` spans to <code>. Assumes text is already HTML-escaped."""
+    parts = _HTML_INLINE_RE.split(text)
+    out = []
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            out.append(part)
+        else:
+            out.append(f"<code>{_html.escape(part)}</code>")
+    return "".join(out)
+
+
+def html_body(text: str) -> Markup:
+    """Render an article body to safe HTML for the EPUB template.
+    Fenced code → <pre><code>, inline code → <code>, paragraphs → <p>,
+    dash lists → <ul><li>, math delimiters pass through untouched."""
+    if not text:
+        return Markup("")
+    text = _strip_leading_date_line(text)
+
+    blocks: list[str] = []
+
+    def stash_code(m: re.Match) -> str:
+        blocks.append(m.group(1))
+        return f"\x00CB{len(blocks) - 1}\x00"
+
+    stashed = _FENCE_RE.sub(stash_code, text)
+
+    paras = (
+        re.split(r"\n\s*\n+", stashed.strip())
+        if "\n\n" in stashed
+        else re.split(r"\n+", stashed.strip())
+    )
+
+    out: list[str] = []
+    list_items: list[str] = []
+
+    def flush_list() -> None:
+        if list_items:
+            out.append("<ul>" + "".join(list_items) + "</ul>")
+            list_items.clear()
+
+    for p in paras:
+        p = p.strip()
+        if not p:
+            continue
+
+        m = re.fullmatch(r"\x00CB(\d+)\x00", p)
+        if m:
+            flush_list()
+            out.append(f"<pre><code>{_html.escape(blocks[int(m.group(1))])}</code></pre>")
+            continue
+
+        if p.startswith("- "):
+            list_items.append(f"<li>{_process_html_inline(_html.escape(p[2:]))}</li>")
+            continue
+
+        flush_list()
+        out.append(f"<p>{_process_html_inline(_html.escape(p))}</p>")
+
+    flush_list()
+    return Markup("\n".join(out))
+
+
+def _html_env(tpl_dir: Path) -> jinja2.Environment:
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(tpl_dir)),
+        autoescape=True,
+    )
+    env.filters["html_body"] = html_body
+    return env
+
+
+def build_epub(
+    date: str,
+    articles: list[dict],
+    out_dir: Path,
+    decorations: dict | None = None,
+) -> Path:
+    tpl_dir = Path(__file__).parent
+    env = _html_env(tpl_dir)
+    tpl = env.get_template("template.html.j2")
+    html_source = tpl.render(date=date, articles=articles, decorations=decorations or {})
+
+    workdir = out_dir / ".build"
+    workdir.mkdir(parents=True, exist_ok=True)
+    html_path = workdir / f"{date}.html"
+    html_path.write_text(html_source, encoding="utf-8")
+
+    epub_src = workdir / f"{date}.epub"
+    result = subprocess.run(
+        [
+            "pandoc",
+            "--from=html+tex_math_dollars",
+            "--to=epub3",
+            "--mathml",
+            "--toc",
+            "--toc-depth=2",
+            f"--metadata=title=papernews — {date}",
+            f"--metadata=date={date}",
+            "-o", str(epub_src),
+            str(html_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr[-2000:])
+        raise RuntimeError(f"pandoc failed (exit {result.returncode})")
+
+    epub_dst = out_dir / f"{date}.epub"
+    shutil.copy(epub_src, epub_dst)
+    return epub_dst

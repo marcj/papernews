@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>papernews &mdash; {{ date }}</title>
+</head>
+<body>
+
+<h1>papernews</h1>
+<p><strong>{{ date }}</strong> &middot; {{ articles | length }} article{{ 's' if articles | length != 1 }}</p>
+
+{% if decorations.quote %}
+<blockquote>
+  <p>{{ decorations.quote.text }}</p>
+  <footer>&mdash; {{ decorations.quote.author or 'Anonymous' }} <em>(Wikiquote)</em></footer>
+</blockquote>
+{% endif %}
+
+{% if decorations.world_news %}
+<h2>World News</h2>
+<ul>
+{% for item in decorations.world_news %}
+  <li>
+    {% if item.url %}<a href="{{ item.url }}">{{ item.text }}</a>{% else %}{{ item.text }}{% endif %}
+    {% if item.source %}<em>({{ item.source }})</em>{% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
+
+{% set ns = namespace(prev_source=None) %}
+{% for art in articles %}
+{% if art.source != ns.prev_source %}
+{% set ns.prev_source = art.source %}
+<h1>{{ art.source }}</h1>
+{% endif %}
+
+<h2>{% if art.url %}<a href="{{ art.url }}">{{ art.title }}</a>{% else %}{{ art.title }}{% endif %}</h2>
+{% if art.date %}<p><em>{{ art.date }}</em></p>{% endif %}
+{% if art.summary %}<blockquote><p>{{ art.summary }}</p></blockquote>{% endif %}
+{{ art.text | html_body }}
+
+{% endfor %}
+
+</body>
+</html>

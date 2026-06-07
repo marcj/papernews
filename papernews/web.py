@@ -40,14 +40,14 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, abort, jsonify, redirect, send_file, request
 
-from .cache import edition_key, ensure_dir, pdf_path, preview_path
+from .cache import edition_key, ensure_dir, epub_path, pdf_path, preview_path
 from .cli import (
     _collect_current_edition,
     _gather_decorations,
     cmd_ingest,
 )
 from .preview import render_cover_png
-from .render import build_pdf
+from .render import build_epub, build_pdf
 from .store import Store
 
 
@@ -57,11 +57,12 @@ def _cfg_path(env_var: str, default: str) -> Path:
     return Path(os.environ.get(env_var, default))
 
 
-STATE_PATH    = _cfg_path("PAPERNEWS_STATE",  "state.db")
-CONFIG_PATH   = _cfg_path("PAPERNEWS_CONFIG", "sources.toml")
-CACHE_DIR     = _cfg_path("PAPERNEWS_CACHE",  "archive/cache")
-WORKERS       = int(os.environ.get("PAPERNEWS_WORKERS", "8"))
-INGEST_EVERY  = int(os.environ.get("INGEST_INTERVAL_SECONDS", str(4 * 3600)))
+STATE_PATH      = _cfg_path("PAPERNEWS_STATE",  "state.db")
+CONFIG_PATH     = _cfg_path("PAPERNEWS_CONFIG", "sources.toml")
+CACHE_DIR       = _cfg_path("PAPERNEWS_CACHE",  "archive/cache")
+WORKERS         = int(os.environ.get("PAPERNEWS_WORKERS", "8"))
+INGEST_EVERY    = int(os.environ.get("INGEST_INTERVAL_SECONDS", str(4 * 3600)))
+OUTPUT_FORMATS  = {f.strip().lower() for f in os.environ.get("OUTPUT_FORMATS", "pdf").split(",")}
 
 
 def _load_sources() -> list[dict]:
@@ -112,6 +113,28 @@ def _build_pdf_for_key(key: str, store: Store, sources: list[dict]) -> Path:
     return out
 
 
+def _build_epub_for_key(key: str, store: Store, sources: list[dict]) -> Path:
+    """Build the current-edition EPUB into the cache, keyed by `key`."""
+    out = epub_path(CACHE_DIR, key)
+    if out.exists():
+        return out
+    with _lock_for(f"epub:{key}"):
+        if out.exists():
+            return out
+        ensure_dir(CACHE_DIR)
+        articles = _collect_current_edition(store, sources)
+        decorations = _gather_decorations()
+        tmp_epub = build_epub(
+            date.today().isoformat(),
+            articles,
+            CACHE_DIR,
+            decorations=decorations,
+        )
+        if tmp_epub != out:
+            tmp_epub.replace(out)
+    return out
+
+
 def _build_preview_for_key(key: str, pdf: Path) -> Path:
     out = preview_path(CACHE_DIR, key)
     if out.exists():
@@ -142,17 +165,20 @@ def _do_ingest() -> None:
         # for SCP-ing to a reMarkable, mailing it somewhere, printing, etc.
         hook = os.environ.get("POST_INGEST_HOOK", "").strip()
         if hook:
-            try:
-                key = _current_key(store, sources)
-                pdf = _build_pdf_for_key(key, store, sources)
-                subprocess.run(
-                    [hook, str(pdf)],
-                    timeout=int(os.environ.get("POST_INGEST_HOOK_TIMEOUT", "300")),
-                    check=False,
-                )
-            except Exception as e:
-                sys.stderr.write(f"[post-ingest hook] {e}\n")
-                sys.stderr.flush()
+            hook_timeout = int(os.environ.get("POST_INGEST_HOOK_TIMEOUT", "300"))
+            key = _current_key(store, sources)
+            for fmt, builder in [
+                ("pdf", lambda: _build_pdf_for_key(key, store, sources)),
+                ("epub", lambda: _build_epub_for_key(key, store, sources)),
+            ]:
+                if fmt not in OUTPUT_FORMATS:
+                    continue
+                try:
+                    out_file = builder()
+                    subprocess.run([hook, str(out_file)], timeout=hook_timeout, check=False)
+                except Exception as e:
+                    sys.stderr.write(f"[post-ingest hook/{fmt}] {e}\n")
+                    sys.stderr.flush()
     finally:
         _ingest_lock.release()
 
@@ -168,7 +194,12 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        return _LANDING_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+        epub_link = (
+            '<p><a class="cta" href="/digest.epub">Download today (EPUB)</a></p>'
+            if "epub" in OUTPUT_FORMATS else ""
+        )
+        html = _LANDING_HTML.replace("((epub_link))", epub_link)
+        return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
     @app.get("/sources")
     def sources_endpoint():
@@ -193,6 +224,22 @@ def create_app() -> Flask:
             mimetype="application/pdf",
             as_attachment=False,
             download_name=f"papernews-{date.today().isoformat()}.pdf",
+            max_age=300,
+        )
+
+    @app.get("/digest.epub")
+    def digest_epub():
+        if "epub" not in OUTPUT_FORMATS:
+            abort(404)
+        sources = _load_sources()
+        store = Store(STATE_PATH)
+        key = _current_key(store, sources)
+        epub = _build_epub_for_key(key, store, sources)
+        return send_file(
+            epub,
+            mimetype="application/epub+zip",
+            as_attachment=True,
+            download_name=f"papernews-{date.today().isoformat()}.epub",
             max_age=300,
         )
 
@@ -285,6 +332,7 @@ _LANDING_HTML = """<!doctype html>
   <p class="sub">A curated PDF you read on your reMarkable, not in a browser.</p>
   <img class="cover" src="/preview.png" alt="Cover preview">
   <p><a class="cta" href="/digest.pdf">Read today (PDF)</a></p>
+  ((epub_link))
   <p class="meta">Updated automatically every few hours. <a href="/sources">Sources</a>.</p>
 </body>
 </html>

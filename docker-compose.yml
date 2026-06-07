@@ -12,6 +12,8 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
       - INGEST_INTERVAL_SECONDS=${INGEST_INTERVAL_SECONDS:-14400}
       - PAPERNEWS_WORKERS=${PAPERNEWS_WORKERS:-8}
+      # Output formats — comma-separated: pdf, epub (default: pdf)
+      - OUTPUT_FORMATS=${OUTPUT_FORMATS:-pdf}
       # Hook to push the PDF to reMarkable after each ingest
       - POST_INGEST_HOOK=${POST_INGEST_HOOK:-}
       - POST_INGEST_HOOK_TIMEOUT=${POST_INGEST_HOOK_TIMEOUT:-300}

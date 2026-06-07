@@ -37,6 +37,10 @@ def pdf_path(cache_dir: Path, key: str) -> Path:
     return cache_dir / f"{key}.pdf"
 
 
+def epub_path(cache_dir: Path, key: str) -> Path:
+    return cache_dir / f"{key}.epub"
+
+
 def preview_path(cache_dir: Path, key: str) -> Path:
     return cache_dir / f"{key}.png"
 
