@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Sequence
 
-from anthropic import Anthropic
+from . import llm
 
 _SYSTEM = (
     "You write a 2-sentence summary of a piece of content for a daily digest.\n"
@@ -22,17 +22,8 @@ _SYSTEM = (
     "- Output ONLY those summary lines, in the same order as the input. No surrounding text."
 )
 
-_MODEL = "claude-haiku-4-5"
+_MODEL = "claude-haiku-4-5"  # reference only; model selection lives in llm.py
 _MAX_CHARS = 4000
-
-_client: Anthropic | None = None
-
-
-def _get() -> Anthropic:
-    global _client
-    if _client is None:
-        _client = Anthropic()
-    return _client
 
 
 def summarize(title: str, text: str) -> str:
@@ -54,13 +45,7 @@ def summarize_batch(items: Sequence[tuple[str, str]]) -> list[str]:
         )
     user_msg = "\n\n".join(parts)
 
-    msg = _get().messages.create(
-        model=_MODEL,
-        max_tokens=300 * len(items),
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-    text = msg.content[0].text.strip()
+    text = llm.chat(_SYSTEM, user_msg, max_tokens=300 * len(items)).strip()
 
     out = [""] * len(items)
     for line in text.splitlines():

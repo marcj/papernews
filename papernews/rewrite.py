@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Sequence
 
-from anthropic import Anthropic
+from . import llm
 
 _SYSTEM = (
     "You are a copy editor preparing content for print in a daily digest.\n"
@@ -44,17 +44,8 @@ _SYSTEM = (
     "- Output ONLY those marker-delimited bodies. No surrounding text."
 )
 
-_MODEL = "claude-haiku-4-5"
+_MODEL = "claude-haiku-4-5"  # reference only; model selection lives in llm.py
 _MAX_CHARS = 16000
-
-_client: Anthropic | None = None
-
-
-def _get() -> Anthropic:
-    global _client
-    if _client is None:
-        _client = Anthropic()
-    return _client
 
 
 def rewrite(title: str, text: str) -> str:
@@ -76,16 +67,7 @@ def rewrite_batch(items: Sequence[tuple[str, str]]) -> list[str]:
         )
     user_msg = "\n\n".join(parts)
 
-    # Streaming required when the output budget is large enough that the
-    # request could exceed the API's 10-minute non-streaming deadline.
-    with _get().messages.stream(
-        model=_MODEL,
-        max_tokens=4096 * len(items),
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": user_msg}],
-    ) as stream:
-        final = stream.get_final_message()
-    text_out = final.content[0].text
+    text_out = llm.chat(_SYSTEM, user_msg, max_tokens=4096 * len(items))
 
     out = [""] * len(items)
     pattern = re.compile(

@@ -12,9 +12,10 @@ dependencies = [
     "apscheduler>=3.10",
     "gunicorn>=21.2",
     "anthropic>=0.40",
+    "httpx>=0.27",
 ]
 
-# LLM calls go through the Anthropic Python SDK (ANTHROPIC_API_KEY env var).
+# LLM backend is selected via LLM_BACKEND env var ("anthropic" or "ollama").
 
 
 [project.scripts]
