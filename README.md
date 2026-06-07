@@ -32,17 +32,17 @@ Hobby project; works. Things will move. Expect rough edges.
 ## How to use
 
 You need: a machine that can run Docker (your laptop, a NAS, a $5/mo VPS,
-anything), an [Anthropic API key](https://console.anthropic.com/settings/keys),
-and ~2 GB of disk for the image.
+anything), an LLM backend (Anthropic API key **or** a local
+[Ollama](https://ollama.com) instance), and ~2 GB of disk for the image.
 
 ```bash
 # 1) Pull
 git clone https://github.com/marcj/papernews
 cd papernews
 
-# 2) Configure your key
+# 2) Configure
 cp .env.example .env
-$EDITOR .env             # paste ANTHROPIC_API_KEY=sk-ant-...
+$EDITOR .env             # paste ANTHROPIC_API_KEY=sk-ant-... (or set LLM_BACKEND=ollama)
 
 # 3) Pick your sources
 $EDITOR sources.toml     # add/remove RSS/HN entries, set per-source limits
@@ -68,10 +68,11 @@ Everything you'd normally want to change is in **two files**:
 
 Optional but useful:
 
-- **`papernews/summarize.py`** + **`papernews/rewrite.py`** — the Claude
-  system prompts. Change `_MODEL` to `claude-sonnet-4-6` for fancier
-  rewrites at ~10× the cost; adjust `_SYSTEM` to change the editorial voice
-  (e.g. disable the auto-translate-to-English rule).
+- **`papernews/summarize.py`** + **`papernews/rewrite.py`** — the LLM
+  system prompts. When using Anthropic, change `ANTHROPIC_MODEL` to
+  `claude-sonnet-4-6` for fancier rewrites at ~10× the cost; adjust
+  `_SYSTEM` to change the editorial voice (e.g. disable the
+  auto-translate-to-English rule).
 - **`papernews/wiki.py`** — what goes into the World news block and the
   Quote-of-the-day source.
 
@@ -119,6 +120,49 @@ first time and is then cached until new content arrives.
 
 State lives in `./data/state.db` (bind-mounted from the host) so it survives
 container restarts.
+
+## LLM backends
+
+papernews routes all LLM calls through `papernews/llm.py`. Switch backends
+with the `LLM_BACKEND` env var.
+
+### Anthropic (default)
+
+```bash
+# .env
+LLM_BACKEND=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Uses `claude-haiku-4-5` by default. Override with `ANTHROPIC_MODEL=claude-sonnet-4-6`
+for higher quality at ~10× the cost.
+
+### Ollama (local)
+
+Run any model locally — no API key, no per-token cost, nothing leaves your
+machine.
+
+```bash
+# .env
+LLM_BACKEND=ollama
+OLLAMA_HOST=http://your-ollama-host:11434   # default: http://localhost:11434
+OLLAMA_MODEL=qwen2.5:3b                    # default: mistral
+OLLAMA_TIMEOUT=1800                        # seconds; increase for slow hardware
+PAPERNEWS_WORKERS=1                        # set to 1 for CPU inference
+```
+
+**Model recommendations:** The rewrite step is token-heavy — aim for a model
+that balances speed and quality for your hardware.
+
+| Model | VRAM | Notes |
+|-------|------|-------|
+| `qwen2.5:3b` | ~2 GB | Fast, fits on most GPUs |
+| `mistral:7b` | ~5 GB | Better quality, needs a discrete GPU |
+| `qwen2.5:7b` | ~5 GB | Good quality/speed balance |
+
+CPU inference works but is slow. A discrete GPU with ROCm (AMD) or CUDA
+(NVIDIA) support makes a significant difference. Set `PAPERNEWS_WORKERS=1`
+when running on CPU to avoid hammering Ollama with concurrent requests.
 
 ## What it produces
 
@@ -171,11 +215,11 @@ A 100–200 page PDF with:
        └───┬────┘                │
            ▼                     │
        ┌─────────┐               │
-       │summarize│ ─── Claude    │
+       │summarize│ ─── LLM       │
        └───┬─────┘               │
            ▼                     │
        ┌─────────┐               │
-       │ rewrite │ ─── Claude    │
+       │ rewrite │ ─── LLM       │
        └───┬─────┘               │
            ▼                     ▼
        SQLite store (state.db)   in-memory
@@ -193,13 +237,12 @@ Four stages, each idempotent and resumable:
 
 1. **gather** — pulls new items from each source, runs `trafilatura` to
    extract the article body, stores the raw text. Pure I/O — no LLM cost.
-2. **summarize** — batches up to 8 articles per Claude call and produces a
+2. **summarize** — batches up to 8 articles per LLM call and produces a
    ≤40-word two-sentence summary for each (used as the lede in the front
    matter and in the contents listing).
-3. **rewrite** — batches up to 8 articles per Claude call (streamed because
-   the output is long) and produces a clean, properly-paragraphed,
-   translated-to-English version of each article body for the renderer.
-   Preserves code fences and `$math$` exactly.
+3. **rewrite** — batches up to 8 articles per LLM call and produces a
+   clean, properly-paragraphed, translated-to-English version of each
+   article body for the renderer. Preserves code fences and `$math$` exactly.
 4. **render** — pulls the latest N articles per source from the store,
    plus fresh world news + quote + DYK, and runs them through a Jinja
    template into xelatex → PDF. Results are cached by a hash of "what's in
@@ -385,11 +428,11 @@ You don't have to use Docker — the CLI works directly:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY=sk-ant-...   # or: export LLM_BACKEND=ollama OLLAMA_HOST=...
 
 .venv/bin/python -m papernews gather       # fetch + extract
-.venv/bin/python -m papernews summarize    # claude pass 1 (batched)
-.venv/bin/python -m papernews rewrite      # claude pass 2 (batched, streamed)
+.venv/bin/python -m papernews summarize    # LLM pass 1 (batched)
+.venv/bin/python -m papernews rewrite      # LLM pass 2 (batched)
 .venv/bin/python -m papernews render       # xelatex → PDF
 # or all of the above in sequence:
 .venv/bin/python -m papernews build
@@ -417,11 +460,13 @@ Customize whatever you like — the Jinja delimiters are LaTeX-safe
 
 ## Cost
 
-Roughly per ingest cycle, with Claude Haiku 4.5 (default model):
+**With Ollama:** free — all inference runs locally.
 
-- ~50 articles
+**With Anthropic (Claude Haiku 4.5, default):** roughly per ingest cycle
+with ~50 articles:
+
 - Summarize: 6 batched calls (~8 articles each)
-- Rewrite: 6 batched calls, streamed
+- Rewrite: 6 batched calls
 - World-news compress: 1 call
 
 Order-of-magnitude: a few cents to a few tens of cents per cycle depending on
@@ -435,9 +480,11 @@ can't surprise you above whatever you set.
 ## Privacy
 
 - All data lives on your machine (`./data/state.db` + `./data/archive/cache/`).
-- Article text is sent to the Anthropic API for summarization and rewriting.
-  That's the only outbound destination for content (besides fetching the
-  feeds themselves).
+- With `LLM_BACKEND=anthropic`: article text is sent to the Anthropic API
+  for summarization and rewriting. That's the only outbound destination for
+  content (besides fetching the feeds themselves).
+- With `LLM_BACKEND=ollama`: nothing leaves your machine. All inference
+  runs locally.
 - No analytics, no telemetry, no third-party scripts in the landing page.
 
 ## Project layout
@@ -447,8 +494,9 @@ papernews/
 ├── papernews/
 │   ├── fetch.py          # HN Algolia + RSS feedparser
 │   ├── extract.py        # trafilatura
-│   ├── summarize.py      # Anthropic SDK, batched
-│   ├── rewrite.py        # Anthropic SDK, batched + streamed
+│   ├── llm.py            # LLM backend router (Anthropic or Ollama)
+│   ├── summarize.py      # summarization prompts + batching
+│   ├── rewrite.py        # rewrite prompts + batching
 │   ├── wiki.py           # World news / Quote / DYK / tech feeds
 │   ├── store.py          # SQLite article store + queries
 │   ├── render.py         # Jinja + xelatex
