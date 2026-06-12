@@ -56,11 +56,13 @@ _INLINE_RE = re.compile(r"`([^`\n]+)`")
 
 # Math delimiters: $$...$$, \[...\], $...$, \(...\). Order matters — double
 # dollars first so they win over single dollars, and bracket forms before
-# round forms for the same reason.
+# round forms for the same reason. The single-dollar form is constrained to a
+# single line ([^$\n]) so a stray literal `$` in prose can't run away and
+# swallow following paragraphs; genuine inline math is single-line anyway.
 _MATH_RE = re.compile(
     r"\$\$(?P<dd>.+?)\$\$"
     r"|\\\[(?P<br>.+?)\\\]"
-    r"|(?<![\\$])\$(?P<sd>[^$\n][^$]*?)\$(?!\d)"
+    r"|(?<![\\$])\$(?P<sd>[^$\n][^$\n]*?)\$(?!\d)"
     r"|\\\((?P<pr>.+?)\\\)",
     re.DOTALL,
 )
@@ -98,17 +100,6 @@ def _render_code_block(code: str) -> str:
         + inner
         + "\n}\n\\par\\smallskip\n"
     )
-
-
-def _process_inline(text: str) -> str:
-    parts = _INLINE_RE.split(text)
-    out = []
-    for i, part in enumerate(parts):
-        if i % 2 == 0:
-            out.append(tex_escape(part))
-        else:
-            out.append("\\texttt{" + _tex_escape_code(part) + "}")
-    return "".join(out)
 
 
 def _stash_math(text: str) -> tuple[str, list[str]]:
@@ -170,7 +161,21 @@ def tex_body(text: str) -> str:
 
     stashed = _FENCE_RE.sub(stash_code, text)
 
-    # 2) Stash math expressions so escaping doesn't munge backslashes/braces.
+    # 2) Stash inline `code` spans BEFORE math detection. A literal `$` inside
+    #    inline code (e.g. `$HOME`, `$(pwd)`, a `$5` price in a code span) must
+    #    not be seen by the math scanner below — otherwise it is mis-read as the
+    #    opening of inline math, matches forward to the next `$`, and swallows
+    #    the prose in between. The result is broken LaTeX that fails xelatex
+    #    with "Paragraph ended before \text@command was complete".
+    inlines: list[str] = []
+
+    def stash_inline(m: re.Match) -> str:
+        inlines.append(m.group(1))
+        return f"\x00IC{len(inlines) - 1}\x00"
+
+    stashed = _INLINE_RE.sub(stash_inline, stashed)
+
+    # 3) Stash math expressions so escaping doesn't munge backslashes/braces.
     stashed, math_bits = _stash_math(stashed)
 
     paras = (
@@ -194,17 +199,20 @@ def tex_body(text: str) -> str:
 
         p = re.sub(r"\x00CB(\d+)\x00", expand_code, p)
 
-        # Process prose: handle inline backtick code + tex-escape the rest,
-        # WITHOUT touching math placeholders.
-        rendered = _process_inline(p)
+        # Escape the prose. The \x00IC{N}\x00 and \x00MB{N}\x00 placeholders are
+        # plain ASCII + NULs, so they pass through tex_escape untouched.
+        rendered = tex_escape(p)
 
-        # Re-inject math placeholders as raw LaTeX (they were escaped to
-        # \x00MB{N}\x00 → \textbackslash{}x00MB... — restore.
+        # Re-inject inline code spans as \texttt{...}.
+        def expand_inline(mm: re.Match) -> str:
+            return "\\texttt{" + _tex_escape_code(inlines[int(mm.group(1))]) + "}"
+
+        rendered = re.sub(r"\x00IC(\d+)\x00", expand_inline, rendered)
+
+        # Re-inject math placeholders as raw LaTeX math.
         def expand_math(mm: re.Match) -> str:
             return math_bits[int(mm.group(1))]
 
-        # The placeholder may have been mangled by tex_escape; recover both
-        # the raw and any escaped form.
         rendered = re.sub(r"\x00MB(\d+)\x00", expand_math, rendered)
         out.append(rendered)
     return "\n\n".join(out)
