@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import html
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -43,7 +44,13 @@ def fetch_hn(
     since = int(time.time() - since_hours * 3600)
     params = {
         "tags": "story",
-        "numericFilters": [f"created_at_i>{since}", f"points>{min_points}"],
+        # Algolia wants multiple numeric filters as a JSON-encoded array.
+        # Passing a bare Python list makes requests emit repeated
+        # `numericFilters=` params, of which Algolia honours only the first —
+        # which silently drops the min_points gate.
+        "numericFilters": json.dumps(
+            [f"created_at_i>{since}", f"points>{min_points}"]
+        ),
         "hitsPerPage": 100,
     }
     r = requests.get(_HN_SEARCH, params=params, timeout=15)

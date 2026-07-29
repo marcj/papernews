@@ -45,13 +45,14 @@ def cmd_gather(store: Store, sources: list[dict]) -> int:
                 items = fetch_hn(
                     source_name=name,
                     limit=limit,
-                    since_hours=src.get("since_hours", 48),
-                    min_points=src.get("min_points", 50),
+                    since_hours=int(src.get("since_hours", 48)),
+                    min_points=int(src.get("min_points", 50)),
                 )
             elif kind == "rss":
+                since_hours = src.get("since_hours")
                 items = fetch_rss(
                     name, src["url"], limit=limit,
-                    since_hours=src.get("since_hours"),
+                    since_hours=int(since_hours) if since_hours is not None else None,
                 )
             elif kind == "wikipedia_events":
                 items = fetch_wikipedia_events(
@@ -235,6 +236,16 @@ def _collect_current_edition(store: Store, sources: list[dict]) -> list[dict]:
     for src in sources:
         name = src["name"]
         limit = int(src.get("limit", 10))
+        # Rows are never deleted, so gather-time filtering alone would leave
+        # previously-ingested stale articles in the edition forever — the
+        # window has to be re-applied here at render time.
+        #
+        # Note this makes the edition clock-dependent: the same store and
+        # config yield a different edition once the window rolls past an
+        # article. The cache key (cache.edition_key) only moves on new
+        # content or config changes, so a cached PDF can outlive its window
+        # until the next ingest. That's deliberate — it beats serving an
+        # empty paper between ingests.
         since_hours = src.get("since_hours")
         since_date = (
             (datetime.now(timezone.utc) - timedelta(hours=int(since_hours)))

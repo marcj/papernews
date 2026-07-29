@@ -13,19 +13,27 @@ import json
 from pathlib import Path
 
 
+def _source_fields(s: dict) -> dict:
+    """The parts of a source config that change which articles get rendered."""
+    fields = {
+        "name": s.get("name"),
+        "kind": s.get("kind"),
+        "limit": s.get("limit"),
+    }
+    # since_hours changes which stored articles make the edition, so it has
+    # to move the key too — but only include it when actually set, so configs
+    # that don't use it keep the keys their cached PDFs were built under.
+    if s.get("since_hours") is not None:
+        fields["since_hours"] = s["since_hours"]
+    return fields
+
+
 def edition_key(content_token: str, sources_config: list[dict]) -> str:
     """Stable hash representing 'which edition this is'."""
     payload = json.dumps(
         {
             "content": content_token,
-            "sources": [
-                {
-                    "name": s.get("name"),
-                    "kind": s.get("kind"),
-                    "limit": s.get("limit"),
-                }
-                for s in sources_config
-            ],
+            "sources": [_source_fields(s) for s in sources_config],
         },
         sort_keys=True,
         separators=(",", ":"),
