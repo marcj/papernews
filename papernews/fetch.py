@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import html
 import time
 from dataclasses import dataclass
@@ -42,7 +43,7 @@ def fetch_hn(
     since = int(time.time() - since_hours * 3600)
     params = {
         "tags": "story",
-        "numericFilters": f"created_at_i>{since},points>{min_points}",
+        "numericFilters": [f"created_at_i>{since}", f"points>{min_points}"],
         "hitsPerPage": 100,
     }
     r = requests.get(_HN_SEARCH, params=params, timeout=15)
@@ -85,7 +86,13 @@ def fetch_wikipedia_events(
         )
 
 
-def fetch_rss(source_name: str, feed_url: str, limit: int = 20) -> Iterator[RawItem]:
+def fetch_rss(
+    source_name: str,
+    feed_url: str,
+    limit: int = 20,
+    since_hours: int | None = None,
+) -> Iterator[RawItem]:
+    cutoff = time.time() - since_hours * 3600 if since_hours is not None else None
     d = feedparser.parse(feed_url)
     for entry in d.entries[:limit]:
         url = getattr(entry, "link", None)
@@ -96,5 +103,8 @@ def fetch_rss(source_name: str, feed_url: str, limit: int = 20) -> Iterator[RawI
             getattr(entry, "published_parsed", None)
             or getattr(entry, "updated_parsed", None)
         )
+        if cutoff is not None and parsed is not None:
+            if calendar.timegm(parsed) < cutoff:
+                continue
         surfaced = time.strftime("%Y-%m-%d", parsed) if parsed else None
         yield RawItem(source=source_name, url=url, title=title, surfaced=surfaced)

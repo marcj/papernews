@@ -166,22 +166,46 @@ class Store:
         )
         return list(cur.fetchall())
 
-    def latest_per_source(self, source: str, limit: int) -> list[sqlite3.Row]:
+    def latest_per_source(
+        self, source: str, limit: int, since_date: str | None = None
+    ) -> list[sqlite3.Row]:
         """Most recent `limit` ready (text + summary) articles for source,
-        ordered newest first by best available date."""
-        cur = self.con.execute(
-            """
-            SELECT url_hash, source, url, title, text, body, summary,
-                   surfaced, published, fetched_at
-              FROM article
-             WHERE source = ?
-               AND text     IS NOT NULL
-               AND summary  IS NOT NULL
-             ORDER BY COALESCE(published, surfaced, fetched_at) DESC
-             LIMIT ?
-            """,
-            (source, limit),
-        )
+        ordered newest first by best available date.
+
+        since_date: ISO date string (YYYY-MM-DD); when set, articles whose
+        best available date is older than this are excluded. Articles with no
+        date at all are always kept.
+        """
+        if since_date is None:
+            cur = self.con.execute(
+                """
+                SELECT url_hash, source, url, title, text, body, summary,
+                       surfaced, published, fetched_at
+                  FROM article
+                 WHERE source = ?
+                   AND text     IS NOT NULL
+                   AND summary  IS NOT NULL
+                 ORDER BY COALESCE(published, surfaced, fetched_at) DESC
+                 LIMIT ?
+                """,
+                (source, limit),
+            )
+        else:
+            cur = self.con.execute(
+                """
+                SELECT url_hash, source, url, title, text, body, summary,
+                       surfaced, published, fetched_at
+                  FROM article
+                 WHERE source = ?
+                   AND text     IS NOT NULL
+                   AND summary  IS NOT NULL
+                   AND (COALESCE(published, surfaced) IS NULL
+                        OR COALESCE(published, surfaced) >= ?)
+                 ORDER BY COALESCE(published, surfaced, fetched_at) DESC
+                 LIMIT ?
+                """,
+                (source, since_date, limit),
+            )
         return list(cur.fetchall())
 
     def max_fetched_at(self) -> str:

@@ -302,19 +302,21 @@ min_points  = 100
 Parsed with [feedparser](https://feedparser.readthedocs.io/), so it accepts
 RSS 0.9/1.0/2.0 and Atom 1.0 — every blog and most news sites work.
 
-| field   | type   | default  | meaning |
-|---------|--------|----------|---------|
-| `name`  | string | required | display label (also the contents-page heading) |
-| `kind`  | string | required | must be `"rss"` |
-| `url`   | string | required | feed URL |
-| `limit` | int    | `20`     | take at most N most-recent items |
+| field         | type   | default  | meaning |
+|---------------|--------|----------|---------|
+| `name`        | string | required | display label (also the contents-page heading) |
+| `kind`        | string | required | must be `"rss"` |
+| `url`         | string | required | feed URL |
+| `limit`       | int    | `20`     | take at most N most-recent items |
+| `since_hours` | int    | unset    | skip articles published more than N hours ago (uses the feed's `published`/`updated` date; articles with no date are always kept) |
 
 ```toml
 [[source]]
-name  = "Quanta Magazine"
-kind  = "rss"
-url   = "https://www.quantamagazine.org/feed/"
-limit = 8
+name        = "Quanta Magazine"
+kind        = "rss"
+url         = "https://www.quantamagazine.org/feed/"
+limit       = 8
+since_hours = 168   # one week
 ```
 
 ### Per-source ordering and limits in practice

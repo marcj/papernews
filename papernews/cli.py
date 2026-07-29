@@ -4,7 +4,7 @@ import argparse
 import sys
 import tomllib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date as date_cls, datetime
+from datetime import date as date_cls, datetime, timedelta, timezone
 from pathlib import Path
 
 from .extract import extract
@@ -49,7 +49,10 @@ def cmd_gather(store: Store, sources: list[dict]) -> int:
                     min_points=src.get("min_points", 50),
                 )
             elif kind == "rss":
-                items = fetch_rss(name, src["url"], limit=limit)
+                items = fetch_rss(
+                    name, src["url"], limit=limit,
+                    since_hours=src.get("since_hours"),
+                )
             elif kind == "wikipedia_events":
                 items = fetch_wikipedia_events(
                     source_name=name,
@@ -232,7 +235,13 @@ def _collect_current_edition(store: Store, sources: list[dict]) -> list[dict]:
     for src in sources:
         name = src["name"]
         limit = int(src.get("limit", 10))
-        rows = store.latest_per_source(name, limit)
+        since_hours = src.get("since_hours")
+        since_date = (
+            (datetime.now(timezone.utc) - timedelta(hours=int(since_hours)))
+            .date().isoformat()
+            if since_hours is not None else None
+        )
+        rows = store.latest_per_source(name, limit, since_date=since_date)
         for r in rows:
             out.append({
                 "source": r["source"],
